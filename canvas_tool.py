@@ -95,8 +95,8 @@ def get_canvas_object():
         access_token = parser['SERVER']['token']
         canvas_url = parser['SERVER']['url']
         return canvas
-    except:
-        error(f"there was a problem accessing canvas. try using help-me-setup.")
+    except Exception:
+        error("there was a problem accessing canvas. try using help-me-setup.")
         sys.exit(2)
 
 
@@ -126,7 +126,7 @@ def get_course(canvas, name, is_active=True) -> Course:
     return course_list[0]
 
 
-def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) -> [Course]:
+def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) -> list[Course]:
     ''' find the courses based on partial match '''
     courses = canvas.get_courses(enrollment_type="teacher")
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -369,8 +369,8 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words, points_com
             for entry in s.discussion_entries:
                 entry = DiscussionEntry(None, entry)
                 if entry.created_at_date > due_at_date:
-                    info(
-                        f"skipping discussion from {s.user_id} submitted at {entry.created_at_date} but due {due_at_date}")
+                    info(f"skipping discussion from {s.user_id} submitted at"
+                         "{entry.created_at_date} but due {due_at_date}")
                     continue
                 if count_words(entry.message) > 5:
                     grade = min(grade + points_comment, max_points)
@@ -705,7 +705,7 @@ def min_grade_analyzer(course, min_grade):
                 for score in scores['data']['assignment']['submissionsConnection']['nodes']:
                     currentScore = score['score']
                     name = score['user']['name']
-                    if currentScore == None:
+                    if currentScore is None:
                         continue
                     grades_by_student[name][category].append((currentScore, points_possible))
 
@@ -1010,7 +1010,7 @@ it should have the form:""")
     parser = ConfigParser()
     try:
         parser.read([config_ini])
-    except:
+    except Exception:
         error(f"there was a problem reading {config_ini}. make sure it has the format of:")
         print_config_ini_format(False)
 
@@ -1026,7 +1026,7 @@ it should have the form:""")
         sys.exit(2)
 
     try:
-        with urllib.request.urlopen(url) as con:
+        with urllib.request.urlopen(url):
             info(f"{url} is reachable.")
     except Exception as e:
         error(f"got '{e}' accessing {url}. please check the url in {config_ini}.")
@@ -1034,9 +1034,9 @@ it should have the form:""")
 
     token = check_key("token", parser["SERVER"])
     if token and len(token) > 20:
-        info(f"token found. checking to see if it is usable")
+        info("token found. checking to see if it is usable")
     else:
-        error(f"token is too short. make sure you have copied it correctly from canvas.")
+        error("token is too short. make sure you have copied it correctly from canvas.")
         sys.exit(2)
 
     try:
