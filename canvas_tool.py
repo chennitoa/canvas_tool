@@ -800,8 +800,102 @@ def check_key(key, obj):
     return obj[key]
 
 
+# very simple sanitizer to escape semicolons, tabs, and newlines
+def sanitize(name):
+    return name.replace(';', ',').replace("\n", "\\n").replace("\t", "\\t")
+
+
+ResourceRecord = namedtuple("ResourceRecord", ["id", "url", "type", "name"])
+
+# rr4name and rr4id will have the ResourceRecord type prepended
+rr4name = {}
+rr4id = {}
+rr4url = {}
+
+
+def process_resource_record(rr):
+    rr4name[rr.type + rr.name] = rr
+    rr4id[rr.type + str(rr.id)] = rr
+    rr4url[rr.url] = rr
+
+
+# strip any query params off (in different places the same url will have different params
+def base_url(url):
+    return url.split("?")[0]
+
+
+def map_course_resource_records(course):
+    for folder in course.get_folders():
+        for file in folder.get_files():
+            process_resource_record(
+                ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file))))
+
+    for assignment in course.get_assignments():
+        process_resource_record(
+            ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name))
+    for discussion in course.get_discussion_topics():
+        process_resource_record(
+            ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title))
+    for page in course.get_pages():
+        process_resource_record(ResourceRecord(page.page_id, base_url(page.html_url), "Page", page.title))
+    for quiz in course.get_quizzes():
+        process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title))
+
+
 def download_modules(course, target, dryrun):
-    pass
+    def get_name_from_url(url):
+        # super hacky!!! for some reason /api/v1 is in the module url but not in the url of the objects
+        url = url.replace("/api/v1", "")
+        if url not in rr4url:
+            error(f"{url} is not in {rr4url.keys()}")
+        return sanitize(rr4url[base_url(url)].name)
+
+    def base_inner_module_to_str(module_item):
+        return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}{"" if module_item.published else "; !published"}'
+
+    def named_inner_module_to_str(module_item):
+        return f'{base_inner_module_to_str(module_item)}; {module_item.type}: {get_name_from_url(module_item.url)}'
+
+    module_renderers = {
+        "Assignment": named_inner_module_to_str,
+        "Page": named_inner_module_to_str,
+        "Quiz": named_inner_module_to_str,
+        "Discussion": named_inner_module_to_str,
+        "SubHeader": base_inner_module_to_str,
+        "ExternalUrl": lambda
+            mi: f'{base_inner_module_to_str(mi)}; ExternalUrl; {"" if mi.new_tab else "!"}newtab; {mi.external_url}',
+        "ExternalTool": lambda
+            mi: f'{base_inner_module_to_str(mi)}; ExternalTool; {"" if mi.new_tab else "!"}newtab; {mi.url}; {mi.external_url}',
+    }
+
+    top_modules = []
+    id2name = {}
+    output = ''
+    for module in course.get_modules():
+        id2name[module.id] = module.name
+        ms = f"# {module.name}"
+        if module.unlock_at:
+            ms += f"; unlock={module.unlock_at}"
+        if module.require_sequential_progress:
+            ms += f"; sequential"
+        if module.prerequisite_module_ids:
+            ms += f"; prereqs={','.join([id2name[id] for id in module.prerequisite_module_ids])}"
+        if module.completed_at:
+            ms += f"; completed={module.completed_at}"
+        if not module.published:
+            ms += f"; !published"
+        output += ms + '\n'
+        for item in module.get_module_items():
+            if item.type in module_renderers:
+                output += module_renderers[item.type](item) + '\n'
+            else:
+                warn(f"cannot render {item.__dict__}")
+
+    if dryrun:
+        info(f"would have written:\n{output}to {target}")
+    else:
+        with open(target, "w") as fd:
+            fd.write(output)
 
 
 def download_discussions(course, target, dryrun):
@@ -863,8 +957,8 @@ def download_announcements(course, target, dryrun):
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
-@click.option('--modules', default=False, show_default=True,
-              help=f"download modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
+@click.option('--modules/--no-modules', default=False, show_default=True,
+              help=f"download modules to the {click.style('modules', underline=True, italic=True)} file.")
 @click.option('--discussions', default=False, show_default=True,
               help=f"download discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
 @click.option('--assignments', default=False, show_default=True,
@@ -883,6 +977,7 @@ def download_course_content(course_name, dryrun, modules, discussions, assignmen
     canvas = get_canvas_object()
     course = get_course(canvas, course_name, is_active=False)
     output(f"found {course.name}")
+    map_course_resource_records(course)
 
     if all:
         modules = discussions = assignments = pages = files = announcements = True
